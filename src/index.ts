@@ -23,7 +23,7 @@ const parseLine = (line: string): { expr: string; name: string } => {
 	};
 };
 
-const shouldRun = (expr: string): boolean => {
+const shouldRun = (expr: string): boolean | null => {
 	try {
 		const interval = CronExpressionParser.parse(expr, {
 			currentDate: new Date().toISOString(),
@@ -43,35 +43,46 @@ const shouldRun = (expr: string): boolean => {
 
 		return false;
 	} catch (err) {
-		console.log(err);
-		return false;
+		return null;
 	}
 };
 
 export default {
 	async fetch(request): Promise<Response> {
-		const lines = ((await request.text()) || TEST_TEXT)
+		const content = await request.text();
+
+		const lines = (content || TEST_TEXT)
 			.split('\n')
 			.map((item) => item.trim())
 			.filter(Boolean);
 
-		const runnable = lines.reduce((acc, curr) => {
+		const malformed: number[] = [];
+		const runnable = lines.reduce((acc, curr, idx) => {
 			if (curr.indexOf('  ') !== -1) {
+				malformed.push(idx);
 				return acc;
 			}
 
 			const { expr, name } = parseLine(curr);
 
-			if (shouldRun(expr) === true) {
-				acc.push(name);
+			const check = shouldRun(expr);
+			switch (check) {
+				case null:
+					malformed.push(idx);
+				case true:
+					acc.push(name);
+				case false:
+				default:
 			}
 
 			return acc;
 		}, [] as string[]);
 
-		const text = runnable.join('\n').trim();
-		console.log('text', text);
-
-		return new Response(text);
+		const url = new URL(request.url);
+		if (url.pathname === '/') {
+			return new Response([...new Set(runnable)].join('\n').trim());
+		} else {
+			return new Response(lines.map((item, idx) => `[${malformed.includes(idx) ? 'ERROR' : 'OK'}] ${item}`).join('\n'));
+		}
 	},
 } satisfies ExportedHandler<Env>;
